@@ -149,15 +149,18 @@ Two caveats that cause most repeat failures:
 - `[sandbox]` and `directories` changes take effect on the **next** cake
   invocation, not the current one.
 
-## 4. If the path should already be allowed
+## 4. If a standard path should already be allowed
 
 If a standard toolchain, cache, or system path is denied under the default
-policy, that is a cake gap, not a user error. Fix it in cake's source (add the
-path in `src/clients/tools/sandbox/mod.rs` for shared grants, `macos.rs` for
-Seatbelt rules, `linux.rs` for Landlock rules), or report it with: the platform,
-the denied operation and canonical path, the selected policy, and the exact
-command. Cake's repository keeps the contributor procedure in
-`docs/runbooks/debugging-sandbox.md`.
+policy, that is a cake gap, not a user error. Do not weaken your sandbox or
+patch cake's source to work around it: add the narrowest path from §3 so you can
+continue, then report the gap.
+
+Report: the platform, the denied operation and canonical path, the selected
+`--sandbox` policy, the configured `directories` and `--add-dir` values, and the
+failing command with its full stderr. File it at
+<https://github.com/travisennis/cake/issues>. Keep the §3 grant in place until a
+cake release fixes the gap, then remove it.
 
 ## 5. Common failures
 
@@ -172,7 +175,7 @@ command. Cake's repository keeps the contributor procedure in
 
 ## 6. Verify and report
 
-After changing grants or source: repeat the original command from the original
-working directory with the original policy and grants, and show that an
-**unrelated** path is still blocked. Record the platform, denied operation and
-path, the rule or grant changed, and any check that could not run.
+After changing grants: repeat the original command from the original working
+directory with the original policy and grants, and show that an **unrelated**
+path is still blocked. Record the platform, denied operation and path, the rule
+or grant changed, and any check that could not run.
