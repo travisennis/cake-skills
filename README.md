@@ -22,7 +22,7 @@ its contributor runbooks. Cake resolves them fresh on every invocation.
 Copy the skills into your user-level skills directory:
 
 ```sh
-git clone <this-repo> ~/Projects/cake-skills
+git clone https://github.com/travisennis/cake-skills.git ~/Projects/cake-skills
 mkdir -p ~/.agents/skills
 cp -R ~/Projects/cake-skills/skills/. ~/.agents/skills/
 ```
