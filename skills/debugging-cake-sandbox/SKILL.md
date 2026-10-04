@@ -1,6 +1,6 @@
 ---
 name: debugging-cake-sandbox
-description: Diagnose sandbox denials in cake: `Operation not permitted (os error 1)`, `Permission denied`, or sandbox-init errors when a command works outside cake but fails in the Bash tool; cargo/flock/fcntl behaving differently under cake; or mentions of Seatbelt, sandbox-exec, Landlock, `--sandbox`, or `CAKE_SANDBOX`.
+description: Diagnose sandbox denials in cake: `Operation not permitted (os error 1)`, `Permission denied`, or sandbox-init errors when a command works outside cake but fails in the Bash tool; cargo/flock/fcntl behaving differently under cake; a nested `cake` process (`cake` launching `cake`) failing at startup; or mentions of Seatbelt, sandbox-exec, Landlock, `--sandbox`, or `CAKE_SANDBOX`.
 ---
 
 # Debugging Cake Sandbox Denials
@@ -57,7 +57,8 @@ The **nested-Seatbelt fallback** is different: when cake's startup probe reports
 `sandbox_apply: Operation not permitted` (cake running inside another Seatbelt
 sandbox), cake warns, skips its own child profile, and relies on the inherited
 parent sandbox. Diagnose denials against that parent policy; do not weaken
-cake's profile to fix them.
+cake's profile to fix them. A **nested `cake` process** hits this fallback too;
+§5 covers the separate startup failures it then causes.
 
 To trace a denied operation:
 
@@ -162,7 +163,57 @@ failing command with its full stderr. File it at
 <https://github.com/travisennis/cake/issues>. Keep the §3 grant in place until a
 cake release fixes the gap, then remove it.
 
-## 5. Common failures
+## 5. Running cake inside cake
+
+When a cake run launches another `cake` process through the Bash tool — or any
+harness runs cake inside a sandbox that already constrains it — the inner
+invocation is governed by the **outer** sandbox, and two independent failures
+follow. Check both before assuming the inner prompt or flags are wrong.
+
+**The inner profile is skipped, not stacked (macOS).** Seatbelt cannot apply a
+second profile to an already-sandboxed process. The inner cake's startup probe
+reports `sandbox_apply: Operation not permitted`, so it warns, runs its own Bash
+commands with no inner profile, and relies on the outer one. An inner
+`cake --sandbox read-only` therefore narrows nothing; the outer policy is the
+real boundary. Do not rely on the inner `--sandbox` value for isolation. On
+Linux, Landlock rulesets stack, so the inner ruleset still applies.
+
+**The inner cake cannot initialize its state.** Cake keeps its settings, data,
+and sessions under the home directory, which the outer `workspace-write`
+profile does not grant:
+
+| Path | Holds | Inner cake needs |
+| --- | --- | --- |
+| `~/.config/cake` | settings, hooks, `tools/` | read |
+| `~/.cache/cake` | data dir: cache, logs, telemetry | read + write |
+| `~/.local/share/cake/sessions` | session JSONL | read + write |
+
+The symptom is a startup failure before any model call. On macOS it surfaces as
+a misleading `Error: File exists (os error 17)` where the real cause is a denied
+write; do not chase an EEXIST bug. `cake --version` still works because it
+touches none of these paths.
+
+Unblock it by giving the inner invocation its own writable state. One
+environment variable redirects both the data/log root and the sessions root:
+
+```bash
+CAKE_DATA_DIR="$PWD/.cake-data" \
+  cake --sandbox workspace-write --output-format json '<prompt>'
+```
+
+Or grant the home paths to the outer sandbox in `settings.toml` so the inner run
+can use its defaults:
+
+```toml
+[sandbox]
+read_only = ["~/.config/cake"]
+writable = ["~/.cache/cake", "~/.local/share/cake"]
+```
+
+These are the same grants as §3. The outer run needs them because the inner
+process inherits the outer profile; neither fix changes the outer policy.
+
+## 6. Common failures
 
 | Symptom | Interpretation |
 | --- | --- |
@@ -172,10 +223,15 @@ cake release fixes the gap, then remove it.
 | `flock`/`fcntl` fails on macOS | Trace for a denied `file-lock` or path operation; Seatbelt grants `file-lock` separately. |
 | `flock`/`fcntl` fails on Linux | Trace the accessed file and ordinary filesystem op; Landlock has no lock permission. |
 | Landlock partially/not enforced | Treat as sandbox unavailability; verify kernel support rather than widening paths. |
+| Nested `cake` aborts with `Error: File exists (os error 17)` before any output | The outer sandbox denies `~/.cache/cake` / `~/.local/share/cake`; set `CAKE_DATA_DIR` or grant them (§5). |
+| Inner `--sandbox read-only` has no effect | macOS Seatbelt cannot nest; the inner profile is skipped and the outer policy governs (§5). |
 
-## 6. Verify and report
+## 7. Verify and report
 
 After changing grants: repeat the original command from the original working
 directory with the original policy and grants, and show that an **unrelated**
 path is still blocked. Record the platform, denied operation and path, the rule
 or grant changed, and any check that could not run.
+
+For a nested invocation, also record the outer policy and whether
+`CAKE_DATA_DIR` was overridden.
