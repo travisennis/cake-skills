@@ -140,6 +140,47 @@ Names are case-sensitive registered names: `Bash`, `BashSession`, `Read`,
 `BashSession`. The list replaces lower-precedence values (no union). `--tools`
 and `--no-tools` override for one run. Unknown names are warned and dropped.
 
+## Bash safety judge and custom rubric
+
+The Bash judge is a default-on, fail-closed gate that evaluates every Bash
+command before it runs, above the OS sandbox. Configure it in
+`[tools.bash.judge]` in settings; it is not a separate discovery file.
+
+```toml
+[tools.bash.judge]
+model = "zen"            # optional [[models]] name the judge uses
+rubric_file = ".cake/judge-rubric.md"  # optional extra judge guidance
+enabled = true           # false, or CAKE_JUDGE=off, disables the judge
+allowlist = ["git status"]  # exact raw commands whose block is overridden
+# timeout_secs = 30      # bounded judge call; below 1 is raised to 1
+# retry_budget_secs = 15 # extra seconds one recovery attempt may use
+```
+
+- `rubric_file` points at a user rubric whose text is **appended** to the
+  embedded default rubric under a `# User-added rubric guidance` heading. The
+  result is the judge's system prompt. Relative paths resolve from the
+  invocation working directory, so `.cake/judge-rubric.md` is the project-level
+  name; there is no implicit default location.
+- Your rubric text is **advisory**: it can add always-block classes or describe
+  relaxations, but the judge still answers in the fixed verdict vocabulary, and a
+  relaxation is guidance rather than a hard override. `allowlist` is the only
+  hard override of a `block`; `enabled = false` and `CAKE_JUDGE=off` are the only
+  full bypasses.
+- The verdict codes are a closed set -- `git-history-rewrite`,
+  `git-worktree-discard`, `git-untracked-delete`, `git-force-push`,
+  `git-branch-force-delete`, `git-stash-destructive`, `destructive-rm`,
+  `git-commit-backticks`, `rg-replace-footgun`, `credential-disclosure`,
+  `data-egress`, `unknown-destructive` -- and only `rg-replace-footgun` is a
+  warn-class code. Never write a rubric expecting a new code.
+- A good rubric names the project's paths and semantics, separates mutation from
+  destruction, scopes any relaxation to explicit, guard-bearing commands, and
+  restates the default protections it does not mean to remove. The judge is
+  stateless and sees no conversation history, so a relaxation must hold from the
+  command text alone.
+- Preview a verdict without running anything: `cake bash check -- <command>`.
+  Add `--diagnostic` to print the effective prompts, including your appended
+  rubric, and confirm the guidance is loaded before relying on it.
+
 ## Hooks
 
 Trusted commands. Files append in load order:
