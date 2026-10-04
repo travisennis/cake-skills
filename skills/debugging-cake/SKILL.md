@@ -189,6 +189,9 @@ you left off"`.
 | `$TELEMETRY_DIR/{uuid}.ndjson` | Per-session telemetry (timings, retries, tool durations) |
 | `$LOG_DIR/cake.YYYY-MM-DD.log` | Daily logs |
 
+Cake grants read-only access to these roots by default, so the Bash tool can read
+them without extra grants.
+
 ## When to switch procedures
 
 - Full session review, quality scoring, or setup/cake improvement

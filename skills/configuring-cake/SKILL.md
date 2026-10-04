@@ -249,7 +249,8 @@ top-level object at execute time, so validate your own arguments.
 - `--sandbox read-only | workspace-write | danger-full-access` (CLI). Default is
   sandboxing on and fail-closed.
 - `[sandbox] read_only = [...]`, `writable = [...]` grant extra paths on top of
-  built-ins, `--add-dir`, `directories`, and the toolchain. `~` expands.
+  the built-in toolchain, Cake's own state directories, `--add-dir`, and
+  `directories`. `~` expands.
 - `[limits]`: `max_turns`, `max_tool_calls` (off by default), plus output
   budgets (`read_default_end_line`, `read_max_output_bytes`,
   `bash_output_max_bytes`, `hook_output_limit`, ...). A value is a positive

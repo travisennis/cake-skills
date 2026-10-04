@@ -123,6 +123,7 @@ Compare the denied path against what the policy already grants:
 | `directories` entries | read+write | read |
 | `--add-dir` paths | read+execute | read+execute |
 | Skill directories | read+execute | read+execute |
+| Cake state dirs (data/cache, sessions) | read+execute | read+execute |
 | Toolchain caches (Cargo home, Rustup home) | read+write | read |
 | Cake temp dirs | read+write | read+write |
 | Platform system/config paths | read+execute | read+execute |
@@ -179,14 +180,16 @@ real boundary. Do not rely on the inner `--sandbox` value for isolation. On
 Linux, Landlock rulesets stack, so the inner ruleset still applies.
 
 **The inner cake cannot initialize its state.** Cake keeps its settings, data,
-and sessions under the home directory, which the outer `workspace-write`
-profile does not grant:
+and sessions under the home directory. The outer `workspace-write` profile
+grants read-only access to Cake's data/cache and sessions roots and nothing to
+`~/.config/cake`, so the inner cake still cannot start: it must write its logs,
+telemetry, and session file, and read its settings.
 
-| Path | Holds | Inner cake needs |
-| --- | --- | --- |
-| `~/.config/cake` | settings, hooks, `tools/` | read |
-| `~/.cache/cake` | data dir: cache, logs, telemetry | read + write |
-| `~/.local/share/cake/sessions` | session JSONL | read + write |
+| Path | Holds | Inner cake needs | Outer grants |
+| --- | --- | --- | --- |
+| `~/.config/cake` | settings, hooks, `tools/` | read | none |
+| `~/.cache/cake` | data dir: cache, logs, telemetry | read + write | read |
+| `~/.local/share/cake/sessions` | session JSONL | read + write | read |
 
 The symptom is a startup failure before any model call. On macOS it surfaces as
 a misleading `Error: File exists (os error 17)` where the real cause is a denied
@@ -210,8 +213,10 @@ read_only = ["~/.config/cake"]
 writable = ["~/.cache/cake", "~/.local/share/cake"]
 ```
 
-These are the same grants as §3. The outer run needs them because the inner
-process inherits the outer profile; neither fix changes the outer policy.
+These are the same grants as §3. The default profile already covers the reads of
+the data and session roots; this snippet adds the writes the inner run needs
+plus read access to the config directory. The outer run needs them because the
+inner process inherits the outer profile; neither fix changes the outer policy.
 
 ## 6. Common failures
 
@@ -223,7 +228,7 @@ process inherits the outer profile; neither fix changes the outer policy.
 | `flock`/`fcntl` fails on macOS | Trace for a denied `file-lock` or path operation; Seatbelt grants `file-lock` separately. |
 | `flock`/`fcntl` fails on Linux | Trace the accessed file and ordinary filesystem op; Landlock has no lock permission. |
 | Landlock partially/not enforced | Treat as sandbox unavailability; verify kernel support rather than widening paths. |
-| Nested `cake` aborts with `Error: File exists (os error 17)` before any output | The outer sandbox denies `~/.cache/cake` / `~/.local/share/cake`; set `CAKE_DATA_DIR` or grant them (§5). |
+| Nested `cake` aborts with `Error: File exists (os error 17)` before any output | The outer sandbox denies the writes the inner run needs to `~/.cache/cake` / `~/.local/share/cake`; set `CAKE_DATA_DIR` or grant them (§5). |
 | Inner `--sandbox read-only` has no effect | macOS Seatbelt cannot nest; the inner profile is skipped and the outer policy governs (§5). |
 
 ## 7. Verify and report

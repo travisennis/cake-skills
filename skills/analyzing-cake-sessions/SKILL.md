@@ -323,3 +323,7 @@ and no edit happened between them, this is a stuck pattern.
 | `~/.local/share/cake/sessions/{uuid}.jsonl` | Session files (or `$CAKE_DATA_DIR/sessions/`) |
 | `~/.cache/cake/session-telemetry/{uuid}.ndjson` | Per-session telemetry |
 | `~/.cache/cake/cake.YYYY-MM-DD.log` | Daily logs (or `$CAKE_DATA_DIR/...`) |
+
+Cake grants read-only access to these roots by default, so the Bash tool can read
+them without extra grants. A denied read means an older cake or a tightened
+sandbox; see `debugging-cake-sandbox`.
