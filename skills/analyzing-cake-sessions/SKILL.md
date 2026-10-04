@@ -325,5 +325,4 @@ and no edit happened between them, this is a stuck pattern.
 | `~/.cache/cake/cake.YYYY-MM-DD.log` | Daily logs (or `$CAKE_DATA_DIR/...`) |
 
 Cake grants read-only access to these roots by default, so the Bash tool can read
-them without extra grants. A denied read means an older cake or a tightened
-sandbox; see `debugging-cake-sandbox`.
+them without extra grants. If a read is denied, see `debugging-cake-sandbox`.
