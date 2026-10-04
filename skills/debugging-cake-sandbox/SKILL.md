@@ -181,15 +181,15 @@ Linux, Landlock rulesets stack, so the inner ruleset still applies.
 
 **The inner cake cannot initialize its state.** Cake keeps its settings, data,
 and sessions under the home directory. The outer `workspace-write` profile
-grants read-only access to Cake's data/cache and sessions roots and nothing to
-`~/.config/cake`, so the inner cake still cannot start: it must write its logs,
-telemetry, and session file, and read its settings.
+grants read-only access to Cake's data/cache and sessions roots, but nothing to
+`~/.config/cake`. That still leaves the inner cake unable to start: it must
+write its logs, telemetry, and session file, and read its settings.
 
 | Path | Holds | Inner cake needs | Outer grants |
 | --- | --- | --- | --- |
 | `~/.config/cake` | settings, hooks, `tools/` | read | none |
-| `~/.cache/cake` | data dir: cache, logs, telemetry | read + write | read |
-| `~/.local/share/cake/sessions` | session JSONL | read + write | read |
+| `~/.cache/cake` | data dir: cache, logs, telemetry | read + write | read + execute |
+| `~/.local/share/cake/sessions` | session JSONL | read + write | read + execute |
 
 The symptom is a startup failure before any model call. On macOS it surfaces as
 a misleading `Error: File exists (os error 17)` where the real cause is a denied
@@ -213,10 +213,11 @@ read_only = ["~/.config/cake"]
 writable = ["~/.cache/cake", "~/.local/share/cake"]
 ```
 
-These are the same grants as §3. The default profile already covers the reads of
-the data and session roots; this snippet adds the writes the inner run needs
-plus read access to the config directory. The outer run needs them because the
-inner process inherits the outer profile; neither fix changes the outer policy.
+These use the `read_only` and `writable` keys from §3. The default profile
+already covers the reads of the data and session roots; this snippet adds the
+writes the inner run needs plus read access to the config directory. The outer
+run needs them because the inner process inherits the outer profile; neither fix
+changes the outer policy.
 
 ## 6. Common failures
 
