@@ -46,6 +46,45 @@ jq 'select(.type == "task_complete") | .usage.total_tokens' "$SESSION" \
   | awk '{s+=$1} END {print s}'
 ```
 
+## Usage and Attempts
+
+`turn_usage` records are per-provider-attempt accounting records: one per attempt
+that reported usage, written at the provider boundary. They are audit-only (never
+restored into model history), and a record can appear before the
+`reasoning`/`function_call` records of the response it accounts for, with a
+`timestamp` slightly later than theirs - compare payload fields, not file
+position. `attempt` is 1-based and, like `terminal_class`, is present only for
+retried, failed, or discarded attempts.
+
+```bash
+# One line per provider attempt: turn, attempt, terminal class, tokens
+jq -r 'select(.type == "turn_usage")
+  | [.turn, (.attempt // 1), (.terminal_class // "completed"),
+     .usage.input_tokens, .usage.output_tokens, .usage.total_tokens]
+  | @tsv' "$SESSION"
+
+# Retried, failed, or discarded attempts only
+jq 'select(.type == "turn_usage" and .attempt != null)' "$SESSION"
+
+# Reconcile per-attempt usage with each task's completion total
+jq -s '
+  map(select(.task_id != null)) | group_by(.task_id) | map({
+    task_id: .[0].task_id,
+    attempts: (map(select(.type == "turn_usage")) | length),
+    turn_usage_total: (map(select(.type == "turn_usage") | .usage.total_tokens) | add // 0),
+    task_complete_total: (map(select(.type == "task_complete") | .usage.total_tokens) | add // null)
+  })
+' "$SESSION"
+```
+
+`turn_usage_total` should equal `task_complete_total` when every attempt reported
+usage: `task_complete.usage` totals all reported attempts, including failed and
+retried ones. A sum short of the total means some attempt reported no usage (for
+example a transport failure) - not automatically a defect. Newer records also
+carry `usage_presence` (`complete` or `partial`) and provider identity (`model`,
+`response_model`, `provider_request_id`); tolerate their absence, and treat
+per-attempt detail in the session file - not stream-json - as the usage ledger.
+
 ## Conversation
 
 ```bash

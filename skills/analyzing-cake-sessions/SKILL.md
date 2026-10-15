@@ -108,11 +108,26 @@ recommendation.
 `function_call`, `function_call_output`.
 
 **Metadata / audit-only** (never restored): `session_meta`, `task_start`,
-`task_complete`, `prompt_context`, `hook_event`, `skill_activated`.
+`task_complete`, `prompt_context`, `hook_event`, `skill_activated`, `turn_usage`.
 
-Implications: `hook_event`, `prompt_context`, `skill_activated`, and task
-boundaries add zero LLM context; `prompt_context` is an audit snapshot, not what
-the model saw on later turns.
+Implications: `hook_event`, `prompt_context`, `skill_activated`, `turn_usage`,
+and task boundaries add zero LLM context; `prompt_context` is an audit snapshot,
+not what the model saw on later turns.
+
+> **`turn_usage` ordering caveat**: `turn_usage` is a session-only
+> provider-attempt accounting record, not a task-start or stream event. Cake
+> writes one record per provider attempt that reports usage, at the provider
+> boundary - after the response is parsed, before the agent appends that
+> response's conversation records - so a `turn_usage` line can appear *before*
+> the `reasoning`/`function_call` items it accounts for, and its `timestamp` can
+> be microseconds *later* than theirs. Append order and payload timestamps are
+> captured at different points in the provider/agent pipeline; the ordering is
+> intentional and keeps usage durable when the attempt is retried, discarded, or
+> the task fails before conversation records are persisted. Read the record by
+> its `turn`, `attempt` (1-based), `terminal_class`, and `usage` fields;
+> `attempt` and `terminal_class` appear only for retried, failed, or discarded
+> attempts. A `turn_usage` line before parsed response items is not a
+> session-integrity problem.
 
 > **Reasoning `summary` caveat**: it is a protocol artifact, not a human summary.
 > On Chat Completions cake hardcodes `["Thinking..."]`; on the Responses API it is
@@ -124,6 +139,11 @@ the model saw on later turns.
 - Group records from each `task_start` to its matching `task_complete`. Capture
   task id, timestamp, duration, subtype, `is_error`, turns, `tool_call_count`,
   usage, final result/error, `permission_denials`.
+- Reconcile usage: sum `turn_usage` records per `task_id` and compare with
+  `task_complete.usage` (recipe in Essential commands). They match when every
+  provider attempt reported usage; a retried or discarded attempt adds its own
+  record, and a transport failure that reported no usage adds none, so a sum
+  short of the task total is not automatically a defect.
 - Flag trailing tasks without `task_complete`, incomplete assistant messages,
   malformed final records, abrupt endings.
 - Correlate every `function_call` with its `function_call_output` by `call_id`.
@@ -172,7 +192,9 @@ skill, asked permission, or avoided a risky action.
 Use `task_complete.duration_ms`, `turn_count`, and `usage` for slow, expensive,
 or inefficient tasks: high reasoning tokens, many turns for simple tasks,
 repeated high-token tool outputs, large context growth, retry loops, truncation,
-timeout risks. Correlate session id and timestamps with
+timeout risks. Per-attempt `turn_usage` records separate provider retries and
+cache reads from the task total (`usage.input_tokens_details.cached_tokens`).
+Correlate session id and timestamps with
 `$CAKE_DATA_DIR/cake.YYYY-MM-DD.log` or `~/.cache/cake/cake.YYYY-MM-DD.log`.
 
 ### Vanished uncommitted work
@@ -251,6 +273,14 @@ head -1 "$SESSION" | jq '.'                                 # validate header
 jq -r '.type' "$SESSION" | sort | uniq -c                   # shape of the session
 jq 'select(.type == "task_complete") | {task_id, subtype, is_error, duration_ms, turn_count, tool_call_count, result, error, usage, permission_denials}' "$SESSION"
 tail -5 "$SESSION" | jq '.'                                 # how it ended
+
+# Usage reconciliation: per-attempt turn_usage vs task_complete.usage
+jq -s 'map(select(.task_id != null)) | group_by(.task_id) | map({
+  task_id: .[0].task_id,
+  attempts: (map(select(.type == "turn_usage")) | length),
+  turn_usage_total: (map(select(.type == "turn_usage") | .usage.total_tokens) | add // 0),
+  task_complete_total: (map(select(.type == "task_complete") | .usage.total_tokens) | add // null)
+})' "$SESSION"
 ```
 
 For the full jq cookbook (orphan detection, repeated-call signals, log/telemetry
