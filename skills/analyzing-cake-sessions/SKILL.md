@@ -108,26 +108,39 @@ recommendation.
 `function_call`, `function_call_output`.
 
 **Metadata / audit-only** (never restored): `session_meta`, `task_start`,
-`task_complete`, `prompt_context`, `hook_event`, `skill_activated`, `turn_usage`.
+`task_complete`, `prompt_context`, `hook_event`, `skill_activated`, `turn_usage`
+(also streamed as a live record; see the caveat below).
 
 Implications: `hook_event`, `prompt_context`, `skill_activated`, `turn_usage`,
 and task boundaries add zero LLM context; `prompt_context` is an audit snapshot,
 not what the model saw on later turns.
 
-> **`turn_usage` ordering caveat**: `turn_usage` is a session-only
-> provider-attempt accounting record, not a task-start or stream event. Cake
-> writes one record per provider attempt that reports usage, at the provider
-> boundary - after the response is parsed, before the agent appends that
-> response's conversation records - so a `turn_usage` line can appear *before*
-> the `reasoning`/`function_call` items it accounts for, and its `timestamp` can
-> be microseconds *later* than theirs. Append order and payload timestamps are
-> captured at different points in the provider/agent pipeline; the ordering is
-> intentional and keeps usage durable when the attempt is retried, discarded, or
-> the task fails before conversation records are persisted. Read the record by
-> its `turn`, `attempt` (1-based), `terminal_class`, and `usage` fields;
-> `attempt` and `terminal_class` appear only for retried, failed, or discarded
-> attempts. A `turn_usage` line before parsed response items is not a
+> **`turn_usage` ordering caveat**: `turn_usage` is a per-provider-attempt
+> accounting record. Cake writes one for every main-agent attempt that reports
+> usage, at the provider boundary - after the response is parsed, before the
+> agent appends that response's conversation records - so a `turn_usage` line can
+> appear *before* the `reasoning`/`function_call` items it accounts for, and its
+> `timestamp` can be microseconds *later* than theirs. Append order and payload
+> timestamps are captured at different points in the provider/agent pipeline; the
+> ordering is intentional and keeps usage durable when the attempt is retried,
+> discarded, or the task fails before conversation records are persisted. Read the
+> record by its `turn`, `attempt` (1-based), `terminal_class`, and `usage`
+> fields; `attempt` and `terminal_class` appear only for retried, failed, or
+> discarded attempts. A `turn_usage` line before parsed response items is not a
 > session-integrity problem.
+>
+> The record is also streamed: a live run with `--output-format stream-json` and
+> `cake --output-format stream-json replay <uuid>` emit a `turn_usage` record for
+> every main-agent provider attempt that reports usage, with the same payload as
+> the session record. The ordering caveat applies to a stream too. The session
+> file remains the durable ledger; a stream is a live view that can be truncated.
+> `task_complete.usage` remains the task aggregate, not the current context size.
+> A `turn_usage` record may also carry `context_window` and
+> `remaining_context_tokens`, but only when the model configures a context window
+> and `usage_presence` is `complete`. Partial or legacy records omit them, so
+> missing budget fields mean "not measured", not a zero or unchanged context.
+> Summary and compaction provider attempts are session and telemetry audit data;
+> they are never streamed as context measurements.
 
 > **Reasoning `summary` caveat**: it is a protocol artifact, not a human summary.
 > On Chat Completions cake hardcodes `["Thinking..."]`; on the Responses API it is

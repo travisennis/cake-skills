@@ -1,6 +1,6 @@
 # jq Recipes for Cake Session Files
 
-Reference cookbook for ad-hoc queries against persisted cake session files (`{uuid}.jsonl`, format version 4). Load this only when running queries beyond the essentials already in the [Analyzing Cake Sessions runbook](../SKILL.md).
+Reference cookbook for ad-hoc queries against persisted cake session files (`{uuid}.jsonl`, format version 4). Load this only when running queries beyond the essentials already in the [Analyzing Cake Sessions runbook](../SKILL.md). The `select(.type == ...)` predicates also work on `--output-format stream-json` lines; the [Usage and Attempts](#usage-and-attempts) section covers where stream consumption differs from session-file analysis.
 
 All examples assume:
 
@@ -48,13 +48,21 @@ jq 'select(.type == "task_complete") | .usage.total_tokens' "$SESSION" \
 
 ## Usage and Attempts
 
-`turn_usage` records are per-provider-attempt accounting records: one per attempt
-that reported usage, written at the provider boundary. They are audit-only (never
-restored into model history), and a record can appear before the
-`reasoning`/`function_call` records of the response it accounts for, with a
-`timestamp` slightly later than theirs - compare payload fields, not file
+`turn_usage` records are per-provider-attempt accounting records: one per
+main-agent attempt that reported usage, written at the provider boundary. They
+are audit-only (never restored into model history), and a record can appear
+before the `reasoning`/`function_call` records of the response it accounts for,
+with a `timestamp` slightly later than theirs - compare payload fields, not file
 position. `attempt` is 1-based and, like `terminal_class`, is present only for
 retried, failed, or discarded attempts.
+
+The recipes below read a session file, where every task's records are present and
+`task_id` groups them for reconciliation. A live `--output-format stream-json`
+run and `cake --output-format stream-json replay <uuid>` emit the same
+`turn_usage` payloads for main-agent attempts, so the same
+`type == "turn_usage"` predicate applies to a stream; the session file is still
+the durable ledger when a stream is truncated. `task_complete.usage` is the task
+aggregate either way.
 
 ```bash
 # One line per provider attempt: turn, attempt, terminal class, tokens
@@ -65,6 +73,10 @@ jq -r 'select(.type == "turn_usage")
 
 # Retried, failed, or discarded attempts only
 jq 'select(.type == "turn_usage" and .attempt != null)' "$SESSION"
+
+# Context measurements, where reported: turn, configured window, remaining tokens
+jq -r 'select(.type == "turn_usage" and .context_window != null)
+  | [.turn, .context_window, .remaining_context_tokens] | @tsv' "$SESSION"
 
 # Reconcile per-attempt usage with each task's completion total
 jq -s '
@@ -82,8 +94,14 @@ usage: `task_complete.usage` totals all reported attempts, including failed and
 retried ones. A sum short of the total means some attempt reported no usage (for
 example a transport failure) - not automatically a defect. Newer records also
 carry `usage_presence` (`complete` or `partial`) and provider identity (`model`,
-`response_model`, `provider_request_id`); tolerate their absence, and treat
-per-attempt detail in the session file - not stream-json - as the usage ledger.
+`response_model`, `provider_request_id`); tolerate their absence.
+
+`context_window` and `remaining_context_tokens` are optional budget fields on the
+same records. They appear only when the model configures a context window and
+`usage_presence` is `complete`; partial or legacy records omit them. A missing
+field means "not measured", not a zero or unchanged context. Summary and
+compaction attempts do not appear as streamed context measurements; they stay in
+session and telemetry audit data.
 
 ## Conversation
 
