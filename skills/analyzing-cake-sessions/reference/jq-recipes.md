@@ -54,7 +54,9 @@ are audit-only (never restored into model history), and a record can appear
 before the `reasoning`/`function_call` records of the response it accounts for,
 with a `timestamp` slightly later than theirs - compare payload fields, not file
 position. `attempt` is 1-based and, like `terminal_class`, is present only for
-retried, failed, or discarded attempts.
+retried or failed attempts. A first successful attempt keeps the legacy shape
+with both fields absent, even when the run later discards that response as
+context pressure, so a discard cannot be inferred from the record alone.
 
 The recipes below read a session file, where every task's records are present and
 `task_id` groups them for reconciliation. A live `--output-format stream-json`
@@ -71,7 +73,7 @@ jq -r 'select(.type == "turn_usage")
      .usage.input_tokens, .usage.output_tokens, .usage.total_tokens]
   | @tsv' "$SESSION"
 
-# Retried, failed, or discarded attempts only
+# Retried or failed attempts only
 jq 'select(.type == "turn_usage" and .attempt != null)' "$SESSION"
 
 # Context measurements, where reported: turn, configured window, remaining tokens

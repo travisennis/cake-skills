@@ -125,9 +125,11 @@ not what the model saw on later turns.
 > ordering is intentional and keeps usage durable when the attempt is retried,
 > discarded, or the task fails before conversation records are persisted. Read the
 > record by its `turn`, `attempt` (1-based), `terminal_class`, and `usage`
-> fields; `attempt` and `terminal_class` appear only for retried, failed, or
-> discarded attempts. A `turn_usage` line before parsed response items is not a
-> session-integrity problem.
+> fields; `attempt` and `terminal_class` appear only for retried or failed
+> attempts. A first successful attempt keeps the legacy shape with both fields
+> absent, even when the run later discards that response under context pressure,
+> so never infer a discard from the usage record alone. A `turn_usage` line
+> before parsed response items is not a session-integrity problem.
 >
 > The record is also streamed: a live run with `--output-format stream-json` and
 > `cake --output-format stream-json replay <uuid>` emit a `turn_usage` record for
