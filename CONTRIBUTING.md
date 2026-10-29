@@ -53,4 +53,5 @@ cake debug skills # confirm discovery and check for diagnostics
 
 Conventional Commits, scoped to the skill when one is involved, for example
 `docs(debugging-cake): ...` or `feat(configuring-cake): ...`. Keep a change to one
-skill in one commit where you can.
+skill in one commit where you can. Run `just hooks` once per clone to install the
+`commit-msg` hook that rejects other subjects.

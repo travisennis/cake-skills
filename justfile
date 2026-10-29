@@ -2,6 +2,11 @@
 default:
     @just --list
 
+# Install this clone's git hooks: commit messages must be Conventional Commits.
+hooks:
+    git config core.hooksPath .githooks
+    @echo "Installed .githooks (commit-msg)."
+
 # Validate every skill: frontmatter, name/dir match, 400-char budget, links.
 validate:
     ./scripts/validate-skills.sh

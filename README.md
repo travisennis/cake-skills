@@ -54,8 +54,8 @@ not see.
 ## Develop
 
 Authoring rules and the validation gate live in [CONTRIBUTING.md](CONTRIBUTING.md).
-Agents editing this repo should read [AGENTS.md](AGENTS.md). Run `just validate`
-before committing.
+Agents editing this repo should read [AGENTS.md](AGENTS.md). Run `just hooks` once
+per clone to install the commit-msg hook, and `just validate` before committing.
 
 ## License
 

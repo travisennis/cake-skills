@@ -43,5 +43,6 @@ Run `just validate` before every commit.
 ## Repo facts
 
 - Default branch is `master`; commit messages are Conventional Commits scoped to
-  the skill (`docs(debugging-cake): ...`).
+  the skill (`docs(debugging-cake): ...`). `just hooks` installs the `commit-msg`
+  hook that enforces the format.
 - `just validate` is the gate the CI workflow runs; keep it green.
