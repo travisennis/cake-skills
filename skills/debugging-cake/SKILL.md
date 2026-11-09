@@ -157,6 +157,20 @@ cake --resume {uuid} "Try again"
 `--resume` takes a UUID, not a file path. Use `--fork [uuid]` to branch from a
 session without appending to it.
 
+Session files are readable by default but the state roots are **read-only**. If
+you run this from inside a cake run, the inner cake cannot write its logs,
+telemetry, or the resumed session. Either run the resume outside cake, or add
+the missing writes to the outer settings and restart the outer run:
+
+```toml
+[sandbox]
+writable = ["~/.cache/cake", "~/.local/share/cake"]
+```
+
+A fresh `CAKE_DATA_DIR` makes the inner run writable, but it will not contain
+the session you want to resume unless you copy it there. See
+`debugging-cake-sandbox` §5.
+
 ## Worked example: diagnosing a `None` output
 
 User reports: "I ran cake and it just printed `None`."
@@ -190,7 +204,9 @@ you left off"`.
 | `$LOG_DIR/cake.YYYY-MM-DD.log` | Daily logs |
 
 Cake grants read-only access to these roots by default, so the Bash tool can read
-them without extra grants.
+them without extra grants. The global config directory (`<config>/cake`) and the
+user skill root (`~/.agents/skills`) are readable too; `<config>/AGENTS.md` and
+`~/.cake/AGENTS.md` are not granted to tools.
 
 ## When to switch procedures
 

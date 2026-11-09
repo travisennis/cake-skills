@@ -123,6 +123,8 @@ Compare the denied path against what the policy already grants:
 | `directories` entries | read+write | read |
 | `--add-dir` paths | read+execute | read+execute |
 | Skill directories | read+execute | read+execute |
+| User skill root (`~/.agents/skills`) | read+write | read |
+| Global config (`<config>/cake`) | read+execute | read+execute |
 | Cake state dirs (data/cache, sessions) | read+execute | read+execute |
 | Toolchain caches (Cargo home, Rustup home) | read+write | read |
 | Cake temp dirs | read+write | read+write |
@@ -143,11 +145,14 @@ Then grant the narrowest authority that unblocks the command:
   change, not a grant. `danger-full-access` applies no profile at all; it is not
   the repair for a denied standard path.
 
-Two caveats that cause most repeat failures:
+Three caveats that cause most repeat failures:
 
 - Entries that **do not exist** when the sandbox builds its rules are skipped
   with a warning. On Linux, a rule for a missing path is never applied, so grant
   an existing ancestor rather than a not-yet-created leaf.
+- A grant covers its root, not a **symlink target** outside it. The in-process
+  tools canonicalize before checking, so writing through `~/.agents/skills/foo`
+  -> `~/src/foo` needs `~/src/foo` granted or a real copy.
 - `[sandbox]` and `directories` changes take effect on the **next** cake
   invocation, not the current one.
 
@@ -181,13 +186,14 @@ Linux, Landlock rulesets stack, so the inner ruleset still applies.
 
 **The inner cake cannot initialize its state.** Cake keeps its settings, data,
 and sessions under the home directory. The outer `workspace-write` profile
-grants read-only access to Cake's data/cache and sessions roots, but nothing to
-`~/.config/cake`. That still leaves the inner cake unable to start: it must
-write its logs, telemetry, and session file, and read its settings.
+grants read-only access to the global config directory and Cake's data/cache and
+sessions roots. That still leaves the inner cake unable to start: it must write
+its logs, telemetry, and session file.
 
 | Path | Holds | Inner cake needs | Outer grants |
 | --- | --- | --- | --- |
-| `~/.config/cake` | settings, hooks, `tools/` | read | none |
+| `<config>/cake` | settings, hooks, `tools/` | read | read + execute |
+| `~/.agents/skills` | user skills | read + write | read + write |
 | `~/.cache/cake` | data dir: cache, logs, telemetry | read + write | read + execute |
 | `~/.local/share/cake/sessions` | session JSONL | read + write | read + execute |
 
@@ -204,20 +210,20 @@ CAKE_DATA_DIR="$PWD/.cake-data" \
   cake --sandbox workspace-write --output-format json '<prompt>'
 ```
 
-Or grant the home paths to the outer sandbox in `settings.toml` so the inner run
-can use its defaults:
+Or grant the missing writes to the outer sandbox in `settings.toml` so the inner
+run can use its defaults:
 
 ```toml
 [sandbox]
-read_only = ["~/.config/cake"]
 writable = ["~/.cache/cake", "~/.local/share/cake"]
 ```
 
-These use the `read_only` and `writable` keys from §3. The default profile
-already covers the reads of the data and session roots; this snippet adds the
-writes the inner run needs plus read access to the config directory. The outer
-run needs them because the inner process inherits the outer profile; neither fix
-changes the outer policy.
+These use the `writable` key from §3. The default profile already grants read
+access to the config directory, the user skill root, and the data and session
+roots; this snippet adds the writes the inner run needs. The outer run needs
+them because the inner process inherits the outer profile; neither fix changes
+the outer policy. On a cake release that predates these defaults, also add
+`read_only = ["~/.config/cake"]`.
 
 ## 6. Common failures
 

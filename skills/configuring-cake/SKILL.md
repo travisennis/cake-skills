@@ -11,10 +11,10 @@ turn "configure yourself for task X" into concrete files.
 
 ## The one rule that changes your plan
 
-Configuration is read when cake starts, so **anything you write mid-run applies
-to the NEXT invocation, not the current one.** You are configuring your future
-self. Finish by telling the user the exact command to re-run (often
-`cake --resume <UUID> "..."`), or ask them to start a new run.
+Configuration is read when cake starts, so **any change that lands on disk
+mid-run applies to the NEXT invocation, not the current one.** You are
+configuring your future self. Finish by telling the user the exact command to
+re-run (often `cake --resume <UUID> "..."`), or ask them to start a new run.
 
 Two more facts:
 
@@ -42,6 +42,55 @@ Scaffold a project with `cake init` (writes a fully commented
 `.cake/settings.toml`) and `cake init --hooks` (adds an inert
 `.cake/hooks.json.example`). Inspect without a model: `cake --help`,
 `cake debug skills`, `cake debug models`, `cake sessions list`.
+
+## Default filesystem access
+
+These are the defaults of an unmodified cake install under the default
+`workspace-write` policy:
+
+- The working directory is writable. Under `--sandbox read-only` it is
+  read-only.
+- `<config>/cake` is readable by `Read` and Bash but **not writable** by
+  `Edit` or `Write`. You can inspect global settings, `system.md`, hooks, MCP
+  configuration, trust manifests, and `tools/`; you cannot change them.
+- `~/.agents/skills` is readable and writable, even with `--no-skills`. A
+  missing root is created on the first writable run. Under `--sandbox
+  read-only` it is read-only.
+- Cake's state roots (`~/.cache/cake`, `~/.local/share/cake/sessions`, or their
+  `CAKE_DATA_DIR` equivalents) are read-only.
+- `<config>/AGENTS.md` and `~/.cake/AGENTS.md` are loaded by cake at startup but
+  are not granted to tools.
+
+`danger-full-access` removes the Bash OS sandbox, so Bash can write global
+files, but the in-process `Edit` and `Write` tools still reject them.
+
+To change global configuration, pick one and tell the user exactly which:
+
+1. **Ask the user to edit the file outside cake**, then re-run. This is the
+   default and safest path for a one-off change.
+2. **Ask the user to grant the global config directory writable.** Add to the
+   global `<config>/cake/settings.toml`, outside cake:
+
+   ```toml
+   [sandbox]
+   writable = ["<config>/cake"]
+   ```
+
+   This lets the model rewrite global settings, hooks, toolbox tools, and trust
+   manifests. Recommend it only for repeated global edits and name the risk.
+3. **Put the configuration in the project instead.** `.cake/` is writable and
+   becomes active after `cake trust`; prefer it when the setting is
+   project-specific.
+
+`--add-dir` grants read-only access for one run; it cannot make a global path
+writable. To create or edit `<config>/AGENTS.md` or `~/.cake/AGENTS.md`, the
+user must do it outside cake, or grant the parent directory (`<config>` or
+`~/.cake`) writable, which also exposes unrelated siblings.
+
+A grant covers its configured root, not a symlink target outside it. If
+`~/.agents/skills/<name>` is a symlink into a checkout elsewhere, install the
+skill as a real directory (copy) or have the user add the target to
+`[sandbox].writable`.
 
 ## Which file for which job
 
@@ -248,9 +297,11 @@ top-level object at execute time, so validate your own arguments.
 
 - `--sandbox read-only | workspace-write | danger-full-access` (CLI). Default is
   sandboxing on and fail-closed.
-- `[sandbox] read_only = [...]`, `writable = [...]` grant extra paths on top of
-  the built-in toolchain, Cake's own state directories, `--add-dir`, and
-  `directories`. `~` expands.
+- `[sandbox] read_only = [...]`, `writable = [...]` grant extra paths on top
+  of the built-in toolchain, Cake's state directories, the global config
+  directory, the user skill root, `--add-dir`, and `directories`. `~` expands.
+  These are the manual escape hatch when a default grant is too narrow; see
+  "Default filesystem access".
 - `[limits]`: `max_turns`, `max_tool_calls` (off by default), plus output
   budgets (`read_default_end_line`, `read_max_output_bytes`,
   `bash_output_max_bytes`, `hook_output_limit`, ...). A value is a positive
@@ -265,9 +316,12 @@ top-level object at execute time, so validate your own arguments.
    policy. Most cases are "profile + system prompt".
 2. **Read the current state** so you extend instead of clobber: existing
    `.cake/settings.toml`, `.cake/system.md`, `.cake/hooks.json`,
-   `.cake/tools/`, `.agents/skills/`, `AGENTS.md`. Run `cake init` first if
+   `.cake/tools/`, `.agents/skills/`, `AGENTS.md`, plus the global
+   `<config>/cake/` files and `~/.agents/skills/`. Run `cake init` first if
    there is no `.cake/`.
-3. **Write the smallest set of files** that gets X. Prefer a file reference
+3. **Write the smallest set of files** that gets X. Project files are
+   writable; global files need the user's manual edit or an explicit writable
+   grant (see "Default filesystem access"). Prefer a file reference
    (`system_prompt = "..."`) over an unmanaged prompt, and a toolbox tool over
    a hook when the model should *call* the behavior.
 4. **Validate cheaply**: `cake debug skills` (catalog), `cake debug models`
@@ -282,3 +336,6 @@ top-level object at execute time, so validate your own arguments.
 - Do not put secrets in TOML; use `api_key_env` and environment variables.
 - Do not claim a mid-run behavior change. If the current run must behave
   differently, you cannot reconfigure your way there -- say so.
+- Do not claim you wrote a global file when the default grants make it
+  read-only. State the manual edit or grant the user must apply, and do not
+  silently widen the sandbox yourself.

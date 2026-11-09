@@ -370,4 +370,8 @@ and no edit happened between them, this is a stuck pattern.
 | `~/.cache/cake/cake.YYYY-MM-DD.log` | Daily logs (or `$CAKE_DATA_DIR/...`) |
 
 Cake grants read-only access to these roots by default, so the Bash tool can read
-them without extra grants. If a read is denied, see `debugging-cake-sandbox`.
+them without extra grants. The global config directory (`<config>/cake`) and the
+user skill root (`~/.agents/skills`) are readable by default too, which covers
+most setup recommendations. `<config>/AGENTS.md` and `~/.cake/AGENTS.md` are not
+granted to tools; ask the user or read them outside cake. If a read is denied,
+see `debugging-cake-sandbox`.
