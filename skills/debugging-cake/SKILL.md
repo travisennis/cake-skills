@@ -9,14 +9,18 @@ Fast, reactive triage of the user's most recent failed run. Cake reads two
 contracts when it reports a result: exit codes and the persisted-session layout.
 This skill restates only what triage needs.
 
-## Step 1: Find the failing session
+Start with `cake debug session` when the build supports it: it inspects the
+transcript, telemetry sidecar, and related log paths read-only and reports state,
+liveness, tasks, retries, and slow operations. Use the raw-record fallback only
+for older builds or for evidence the report deliberately omits.
 
-The newest file may be the session running this investigation (a probe launched
-from inside cake). Inspect the first user message in the newest few files before
-choosing a target; do not let the probe select itself.
+## Step 1: Choose the target session
 
-`CAKE_DATA_DIR` relocates cache, logs, telemetry, and sessions together; without
-it, sessions and cache use separate default locations.
+The newest session may be the session running this investigation (a diagnostic
+launched from inside cake). Inspect `first_prompt` before choosing a target; do
+not let the probe select itself.
+
+Set the state roots first:
 
 ```bash
 if [ -n "${CAKE_DATA_DIR:-}" ]; then
@@ -28,7 +32,26 @@ else
 fi
 TELEMETRY_DIR="$CACHE_DIR/session-telemetry"
 LOG_DIR="$CACHE_DIR"
+```
 
+`CAKE_DATA_DIR` relocates sessions, cache, logs, and telemetry together; without
+it, sessions use `~/.local/share/cake/sessions` while cache, logs, and telemetry
+use `~/.cache/cake`.
+
+Prefer cake's listing, which reports sessions for the current working directory,
+newest first:
+
+```bash
+cake sessions list --json |
+  jq -r '.data.sessions[] | [.session_id, .timestamp, .first_prompt] | @tsv' |
+  head -3
+```
+
+If the failing run was in another directory, run the listing there, or use the
+session path you already have. If `cake sessions list --json` is unavailable,
+fall back to the filesystem view and inspect the first user message:
+
+```bash
 ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null | head -3 |
 while IFS= read -r candidate; do
   printf '\n%s\n' "$candidate"
@@ -38,12 +61,150 @@ while IFS= read -r candidate; do
 done
 ```
 
-Set `LATEST` to the matching file. Before classifying it, confirm no cake process
-still holds it open:
+Set `SESSION_ID` to the chosen UUID and derive the transcript path:
 
 ```bash
-LATEST="/absolute/path/to/the-selected-session.jsonl"
+SESSION_ID="550e8400-e29b-41d4-a716-446655440000"
+LATEST="$SESSION_DIR/$SESSION_ID.jsonl"
+```
 
+If you were given a transcript path instead of a UUID, use the filename stem
+when it is the UUID; otherwise derive the UUID from the first record. `cake debug
+session` requires the UUID, not the path:
+
+```bash
+LATEST="/absolute/path/to/session.jsonl"
+SESSION_ID="$(basename "$LATEST" .jsonl)"
+# If the filename is not the UUID:
+SESSION_ID="$(awk 'NF { print; exit }' "$LATEST" | jq -r '.session_id')"
+```
+
+The command resolves `SESSION_ID` under `SESSION_DIR`. A transcript outside that
+root, such as a copied snapshot, must be placed under `SESSION_DIR` or under a
+temporary `CAKE_DATA_DIR/sessions/` before it can be diagnosed; otherwise use the
+raw fallback.
+
+## Step 2: Run the session diagnostic
+
+`cake debug session` requires a cake build at or after commit `100aec5`.
+Feature-probe first; an older build reports the `session` subcommand as
+unrecognized:
+
+```bash
+if cake debug session --help >/dev/null 2>&1; then
+  cake debug session "$SESSION_ID"
+else
+  echo "This cake build predates 'debug session'; use the raw fallback in Step 4." >&2
+fi
+```
+
+The command is read-only. It never resumes or forks the session, takes a blocking
+writer lock, repairs or truncates an artifact, runs hooks, gates, MCP servers,
+toolbox tools, or providers, or uploads anything. It copies no prompt or
+assistant text, tool arguments or output, hook command or output, gate evidence
+payload, provider error text or URL, credential, or log body into the report.
+
+The text report starts with the top-level state and liveness. JSON field names
+use underscores; the text labels hyphenate or spell them out:
+
+| Text state | JSON `summary.state` | Meaning |
+| --- | --- | --- |
+| `completed` | `completed` | The last task ended cleanly. If the user still saw bad output, the run mechanics are sound; inspect the result and the raw tail. |
+| `interrupted` | `interrupted` | No terminal task and no writer. The run stopped mid-task; inspect the last raw record. |
+| `live` | `live` | A cake process still holds the append lock. Wait for it to finish, then rerun; never classify from a partial snapshot. |
+| `unknown-liveness` | `unknown_liveness` | The lock probe could not decide. Treat liveness as unknown; wait, or use the fallback liveness check in Step 4, but do not treat a snapshot as final. |
+| `corrupt` | `corrupt` | The transcript is malformed or unsupported. Read `Diagnostics`; this exits `1`. |
+
+Liveness is separate: text `not held` is JSON `not_live`, text `active writer` is
+JSON `live`, and text `unknown` is JSON `unknown`. `diagnosis complete: yes`
+(`diagnosis_complete: true`) means the report read complete artifacts.
+`no`/`false` means a partial tail or a corrupt or unreadable artifact; never
+present a partial-tail result as a completed diagnosis. A missing telemetry
+sidecar is a warning, not an error.
+
+Exit behavior:
+
+- `0` for a clean report or warnings, including missing telemetry and a partial
+  tail.
+- `1` for a corrupt or unreadable transcript or telemetry, or an export
+  create/write/flush failure.
+- `3` for an invalid UUID, a missing session, or an invalid export destination.
+
+Use `--slow-ms <MS>` to change the slow-operation threshold (default `2000`).
+The report shows at most 20 slow rows while the summary keeps the full count.
+The `Tasks` and `Invocations` sections carry task boundaries, terminal state,
+durations, turns, tool counts, usage, retries, slow-operation counts, and the
+observed task-to-invocation correlation (`task_id`, `start_time`, or unmatched).
+Correlation is explicit: do not assume an unmatched invocation belongs to a
+task. The `Artifacts` section lists the log directory and related daily log
+paths; the command does not read log bodies. The compact current-configuration
+section describes the invocation running the diagnostic, not the selected
+session; a project-trust warning does not block the read-only report.
+
+For a machine-readable view:
+
+```bash
+cake debug session "$SESSION_ID" --json |
+  jq '{state:.summary.state, liveness:.summary.liveness,
+       diagnosis_complete:.summary.diagnosis_complete,
+       tasks:[.data.tasks[] | {state, termination, retries, slow_operations}],
+       checks:[.checks[] | {id, status, message}]}'
+```
+
+The document has `command`, `schema_version`, `status`, `summary`, `data`, and
+`checks`. Besides the summary fields above, `data.tasks`, `data.invocations`,
+`data.retries`, `data.slow_operations`, `data.artifacts`, `data.current_config`,
+and `data.export` carry the detailed rows.
+
+## Step 3: Share a redacted report
+
+`--export` writes the same redacted document as `--json` to a new local file:
+
+```bash
+cake debug session "$SESSION_ID" --export ./session-diagnostic.json
+```
+
+The export is byte-identical to the `--json` stdout document. It is created only
+when the target does not exist, is not a symlink, is not a source transcript or
+telemetry path, and has an existing parent; the file mode is `0600` on Unix. A
+relative path is accepted. The command refuses to overwrite an existing report;
+choose a new path.
+
+The target is reported in `data.export.path`; with `--export` alone, stdout
+remains the text report, which also prints the export path. To confirm what was
+written:
+
+```bash
+jq '{summary, export:.data.export}' ./session-diagnostic.json
+```
+
+The export is redacted, not anonymous. It omits prompts, message content, tool
+arguments and output, hook command/stdout/stderr, provider URLs and error text,
+gate evidence, log bodies, session-summary errors, and credential values. It
+still contains the session id, task and invocation ids, model identity, artifact
+paths, the working directory, timing, and operational counts. Review paths and
+the working directory before sharing, and never treat the export as uploadable
+or anonymous.
+
+Older cake builds have no equivalent redacted export. Update cake or summarize
+the problem without sharing the raw session, telemetry, or log files.
+
+## Step 4: Raw evidence pass
+
+The diagnostic report summarizes rather than copying record bodies. Run this
+pass only when the report is unavailable or when it does not carry the exact raw
+payload you need. Raw records can contain prompts, assistant text, tool output,
+hook text, and provider errors; keep them local and never paste them into an
+issue.
+
+### 4a. Fallback liveness and snapshot
+
+Skip this if `cake debug session` already reported `not held`/`not_live` or
+`completed`/`interrupted`. Use it when the command is unavailable, when liveness
+is `unknown`, or when you need an older-cake workflow. Do not diagnose a live
+session from a partial snapshot.
+
+```bash
 if command -v lsof >/dev/null 2>&1; then
   lsof_status=0
   PIDS="$(lsof -t "$LATEST" 2>/dev/null)" || lsof_status=$?
@@ -64,8 +225,7 @@ fi
 ```
 
 If the check errors, or the mtime changes while you wait, do not classify it yet.
-A live session must not be diagnosed from a partial snapshot. Once no writer
-remains, snapshot securely before further analysis:
+Once no writer remains, snapshot securely before further analysis:
 
 ```bash
 umask 077
@@ -76,15 +236,16 @@ LATEST="$TARGET_SNAPSHOT"
 echo "$LATEST"
 ```
 
-Analyze the snapshot through the rest of this skill.
+Analyze the snapshot through the rest of this fallback.
 
-## Step 2: How did the session end?
+### 4b. Last records
 
 A complete invocation ends with `task_complete`; anything else means the task did
 not finish cleanly.
 
 ```bash
 tail -1 "$LATEST" | jq '{type, is_error, subtype, error}'
+tail -5 "$LATEST" | jq '.'
 ```
 
 | Last record type | Meaning |
@@ -97,49 +258,57 @@ tail -1 "$LATEST" | jq '{type, is_error, subtype, error}'
 An interrupt (Ctrl-C) does end with `task_complete`: cake writes an interrupted
 outcome and exits `130`.
 
-## Step 3: Last few records
+### 4c. Exact telemetry records
+
+The diagnostic report already covers invocation grouping, retries, failed
+attempts, tool-call errors, and slow operations. Use the sidecar `jq` only for
+the exact payload the report omits:
 
 ```bash
-tail -5 "$LATEST" | jq '.'
-```
-
-Usually reveals the last tool invoked, the last output seen, or where reasoning
-trailed off.
-
-## Step 4: Today's log
-
-```bash
-tail -100 "$LOG_DIR"/cake.$(date +%Y-%m-%d).log | grep -iE "error|warn|truncat"
-```
-
-Common patterns: `output truncated` (a tool output hit its cap), API errors or
-timeouts, a dropped stream, or a panic (cake itself crashed).
-
-## Step 5: Telemetry for retries and timing
-
-```bash
-SESSION_ID="$(awk 'NF { print; exit }' "$LATEST" | jq -r '.session_id')"
 TELEMETRY="$TELEMETRY_DIR/$SESSION_ID.ndjson"
 
 if [ -f "$TELEMETRY" ]; then
-  jq 'select(.type == "retry_scheduled") | {attempt, reason, delay_ms, detail}' "$TELEMETRY"
-  jq 'select(.type == "tool_call") | {turn_index, name, duration_ms, output_bytes, was_error}' "$TELEMETRY"
+  jq 'select(.type == "retry_scheduled")' "$TELEMETRY"
+  jq 'select(.type == "tool_call" and .was_error == true)' "$TELEMETRY"
   jq 'select(.type == "session_summary")' "$TELEMETRY"
 else
   echo "Telemetry sidecar not found: $TELEMETRY" >&2
 fi
 ```
 
-Telemetry is a separate performance sidecar, not resumable conversation history.
+`retry_scheduled.detail` and `session_summary` can contain provider error text;
+the report omits those fields, so do not paste them. Telemetry is a performance
+sidecar, not resumable conversation history.
 
-## Step 6: Correlate session and log
+### 4d. Logs and session-id correlation
+
+The diagnostic report lists related daily log paths. Use them when it is
+available:
 
 ```bash
-SESSION_ID="$(awk 'NF { print; exit }' "$LATEST" | jq -r '.session_id')"
-grep "$SESSION_ID" "$LOG_DIR"/cake.*.log
+cake debug session "$SESSION_ID" --json |
+  jq -r '.data.artifacts.logs[].path' |
+  while IFS= read -r log; do
+    grep -Hn -iE 'error|timeout|panic|truncat' "$log"
+  done
 ```
 
-## Why `None` happens
+For older builds, or when the report has no related logs, search the daily logs
+directly:
+
+```bash
+grep -Hn -iE 'error|timeout|panic|truncat' "$LOG_DIR"/cake.*.log | tail -50
+```
+
+Common patterns: `output truncated` (a tool output hit its cap), API errors or
+timeouts, a dropped stream, or a panic (cake itself crashed). To isolate the
+session:
+
+```bash
+grep -Hn "$SESSION_ID" "$LOG_DIR"/cake.*.log
+```
+
+## Step 5: Why `None` happens
 
 `None` or empty output almost always means **no completed assistant result was
 produced** before the session ended. Typical causes: the model hit a token limit
@@ -147,7 +316,13 @@ mid-response; the response or stream timed out; the process was interrupted
 (signal, panic, crash); or a tool call hung and never returned. The session file
 then ends without `task_complete`, or `task_complete` carries `is_error: true`.
 
-## Resuming a session
+`cake debug session` distinguishes the cases: `interrupted` with
+`diagnosis_complete: true` means the artifacts are complete and the task simply
+has no terminal completion; `live` means a writer is still there; `corrupt` or a
+`diagnosis_complete: false` result means the evidence is incomplete and you must
+not present it as a finished diagnosis.
+
+## Step 6: Resuming a session
 
 ```bash
 cake sessions list
@@ -155,7 +330,7 @@ cake --resume {uuid} "Try again"
 ```
 
 `--resume` takes a UUID, not a file path. Use `--fork [uuid]` to branch from a
-session without appending to it.
+session without appending to it. `cake debug session` never resumes.
 
 Session files are readable by default but the state roots are **read-only**. If
 you run this from inside a cake run, the inner cake cannot write its logs,
@@ -176,24 +351,53 @@ the session you want to resume unless you copy it there. See
 User reports: "I ran cake and it just printed `None`."
 
 ```bash
-$ SESSION_DIR="${CAKE_DATA_DIR:-$HOME/.local/share/cake}/sessions"
-$ LATEST="$(ls -t "$SESSION_DIR"/*.jsonl | head -1)"
-$ tail -1 "$LATEST" | jq '{type, is_error, subtype, error}'
-{ "type": "reasoning", "is_error": null, "subtype": null, "error": null }
+$ cake sessions list --json | jq -r '.data.sessions[] | [.session_id, .timestamp, .first_prompt] | @tsv' | head -1
+550e8400-e29b-41d4-a716-446655440000  2026-05-21T14:31:58Z  Fix the failing test
+
+$ cake debug session 550e8400-e29b-41d4-a716-446655440000
+Session diagnostics
+Session: 550e8400-e29b-41d4-a716-446655440000
+State: interrupted (diagnosis complete: yes)
+Liveness: not held
+Last activity: 2026-05-21T14:32:01+00:00 (transcript)
+
+Transcript
+  /.../550e8400-e29b-41d4-a716-446655440000.jsonl (ok, 471 B)
+    Records: 2  Tasks: 1  Partial tail: no
+
+Telemetry
+  /.../550e8400-e29b-41d4-a716-446655440000.ndjson (missing)
+
+Tasks
+  550e8400-e29b-41d4-a716-446655440001  interrupted (unknown)
+    Start: 2026-05-21T14:32:01+00:00  End: -
+    Records: 1  Hook events: 0  Retries: 0  Slow operations: 0
+    Invocation: none
+
+Diagnostics
+  warning: no telemetry sidecar exists at .../550e8400-e29b-41d4-a716-446655440000.ndjson
+  warning: task 550e8400-e29b-41d4-a716-446655440001 has no terminal completion record (state interrupted)
 ```
 
-Last record is `reasoning`, not `task_complete`, and no writer holds the file:
-the task was interrupted mid-stream.
+**Diagnosis**: the task started and produced no terminal record, and no writer
+holds the transcript. The session was interrupted mid-task; the missing
+telemetry sidecar is a warning, not the cause. Inspect the last raw record:
 
 ```bash
-$ grep -iE "error|timeout|truncat" "$LOG_DIR"/cake.$(date +%Y-%m-%d).log | tail -5
-2026-05-21T14:32:18Z ERROR cake::clients::responses: stream error: connection reset by peer
-2026-05-21T14:32:18Z WARN  cake::session: task ended without task_complete; session may be incomplete
+$ tail -1 "$LATEST" | jq '{type, is_error, subtype, error}'
+{ "type": "task_start", "is_error": null, "subtype": null, "error": null }
 ```
 
-**Diagnosis**: streaming connection dropped during the model's response.
 **Next step**: `cake sessions list`, then `cake --resume {uuid} "Continue where
-you left off"`.
+you left off"`. If you need to share the evidence, use `--export` instead of the
+raw transcript:
+
+```bash
+$ cake debug session 550e8400-e29b-41d4-a716-446655440000 --export ./session-diagnostic.json
+$ cake debug session 550e8400-e29b-41d4-a716-446655440000 --json |
+    jq '.summary | {state, liveness, diagnosis_complete}'
+{ "state": "interrupted", "liveness": "not_live", "diagnosis_complete": true }
+```
 
 ## File locations
 
