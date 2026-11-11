@@ -41,7 +41,55 @@ the invocation working directory.
 Scaffold a project with `cake init` (writes a fully commented
 `.cake/settings.toml`) and `cake init --hooks` (adds an inert
 `.cake/hooks.json.example`). Inspect without a model: `cake --help`,
+`cake doctor`, `cake debug config`, `cake debug grants`, `cake debug tools`,
 `cake debug skills`, `cake debug models`, `cake sessions list`.
+
+## Which diagnostic answers which question
+
+All five reports are read-only. They inspect configuration without starting a
+run: they call no model, start no provider, hook, gate, toolbox, or MCP server,
+and create no missing directories. `--json` emits one diagnostic document;
+warnings exit `0`, and a settings load failure exits `3`.
+
+These reports are newer than older cake builds: `doctor`, `debug config`,
+`debug grants`, and `debug tools` are new in 077, and `debug skills` changed its
+report shape in 077i. Probe the command lists (`cake --help`, `cake debug
+--help`) or fall back to `cake debug models`, `cake --help`, and manual settings
+inspection.
+
+| Question | Command |
+| --- | --- |
+| Are the settings valid, and what grants do they configure? | `cake doctor` |
+| What model, profile, trust state, limits, prompt source, and selections will this invocation use? | `cake debug config` |
+| What filesystem grants are effective, and which source produced each path? | `cake debug grants` |
+| Why is a built-in, toolbox, or MCP tool missing or filtered? | `cake debug tools` |
+| Which skills loaded, and is the catalog over budget? | `cake debug skills` |
+
+`cake doctor` reports settings health and the merged configured grant settings
+(`directories`, `[sandbox].writable`, `[sandbox].read_only`). It is not the
+complete OS-level policy. `cake debug grants` is authoritative for the effective
+filesystem grant value and every source behind it. `cake debug config` includes
+a grant summary and the broader effective configuration; use it for model,
+credential presence, trust, prompt source, limits, tools, skills, hooks, and
+toolbox discovery. `cake debug models` remains the configured model list.
+
+Where the command accepts them, pass the same `--sandbox`, `--add-dir`, and
+skill/tool selection flags as the invocation you are diagnosing; they describe
+a one-run view without changing defaults. Project trust changes the report:
+`--trust-project` (or `CAKE_TRUST_PROJECT=1`) accepts the current `.cake/`
+snapshot for that invocation, and `--no-project-config` (or
+`CAKE_PROJECT_CONFIG=off`) omits it.
+
+```bash
+cake doctor
+cake debug config --sandbox read-only --add-dir ../shared
+cake debug grants --sandbox read-only --add-dir ../shared
+cake debug tools --tools Read
+cake debug skills --skills review
+```
+
+For a permission denial, start with `cake debug grants` and follow
+`debugging-cake-sandbox`; for a broken run, follow `debugging-cake`.
 
 ## Default filesystem access
 
@@ -324,8 +372,11 @@ top-level object at execute time, so validate your own arguments.
    grant (see "Default filesystem access"). Prefer a file reference
    (`system_prompt = "..."`) over an unmanaged prompt, and a toolbox tool over
    a hook when the model should *call* the behavior.
-4. **Validate cheaply**: `cake debug skills` (catalog), `cake debug models`
-   (settings parse + unknown keys), `cake --help` (flags). Unknown keys warn.
+4. **Validate cheaply**: `cake doctor` (settings health and configured grants),
+   `cake debug config` (effective model, profile, trust, limits, and selections),
+   `cake debug tools` and `cake debug skills` (what the model will see), and
+   `cake --help` (flags). Unknown keys warn. For a permission denial, compare
+   `cake debug grants` with the failing invocation before changing a grant.
 5. **Hand off explicitly**: state which files you wrote and the exact re-run
    command. The configuration takes effect on the next invocation, not this one.
 

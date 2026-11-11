@@ -115,7 +115,30 @@ diagnosis:
 
 ## 3. Find the denied path, then grant it
 
-Compare the denied path against what the policy already grants:
+Start with the effective grant report rather than reconstructing it by hand:
+
+```bash
+cake debug grants --sandbox <policy> --add-dir <path> --skills <names>
+```
+
+Pass the same `--sandbox`, `--add-dir`, and `--skills`/`--no-skills` values as
+the failing invocation. Read the policy and its source, each source list and
+path status (`granted`, `missing`, `would-create`, `not-a-directory`,
+`excluded`, or `denied`), the effective `read_write`, `read_only`,
+`sandbox_writable`, `sandbox_only_read`, `denied`, and `user_grants` sets, and
+the file-tool and Bash projections. A `would-create` or `missing` path is not
+in the effective set and the diagnostic did not create it; grant an existing
+ancestor instead of expecting cake to create the leaf. `--json` emits the same
+report for scripts.
+
+If the build predates `debug grants`, fall back to the table below. If it also
+has `cake doctor`, use its configured-grant section for the merged
+`directories`, `[sandbox].writable`, and `[sandbox].read_only` settings. That
+section is not the complete OS-level policy; route edits to
+`configuring-cake`.
+
+The table below is the conceptual model. `debug grants` is authoritative for the
+actual paths and source statuses.
 
 | Path class | Under `workspace-write` | Under `read-only` |
 | --- | --- | --- |

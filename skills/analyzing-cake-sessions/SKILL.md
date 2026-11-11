@@ -13,6 +13,15 @@ Triggers like "how well did cake do", "rate this run", "evaluate this session"
 call for the appendix; "what went wrong", "find issues", "audit this session" do
 not.
 
+This skill is retrospective. The current-invocation reports, where the build
+provides them - `cake doctor`, `cake debug config`, `cake debug grants`,
+`cake debug tools`, and `cake debug skills` - describe the configuration of the
+invocation running the analysis, not the selected session. Use `cake debug
+session` for the selected session's state, liveness, artifacts, tasks, and
+telemetry. Use the other reports only to ground what the user's current setup
+resolves to; never present them as historical evidence about the session under
+analysis.
+
 ## Phase 0: Ground the analysis
 
 Analyze what cake can actually do and what the user actually configured - not

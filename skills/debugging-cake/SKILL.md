@@ -9,10 +9,61 @@ Fast, reactive triage of the user's most recent failed run. Cake reads two
 contracts when it reports a result: exit codes and the persisted-session layout.
 This skill restates only what triage needs.
 
-Start with `cake debug session` when the build supports it: it inspects the
-transcript, telemetry sidecar, and related log paths read-only and reports state,
-liveness, tasks, retries, and slow operations. Use the raw-record fallback only
-for older builds or for evidence the report deliberately omits.
+Start with Step 0 to separate a broken run from a configuration mismatch. When
+the run itself broke, use `cake debug session` if the build supports it: it
+inspects the transcript, telemetry sidecar, and related log paths read-only and
+reports state, liveness, tasks, retries, and slow operations. Use the raw-record
+fallback only for older builds or for evidence the report deliberately omits.
+
+## Step 0: Rule out current configuration
+
+A failed-looking run is not always a broken session. If the symptom is a
+settings error, a missing tool or skill, a permission denial, or a run that used
+the wrong model or trust state, inspect the resolved configuration first. Keep
+`cake debug session` primary when the run itself broke: a crash, hang, truncated
+or empty result, mid-stream interrupt, or a bare `Tool error:` from the selected
+session.
+
+- Settings load failure (exit `3`), unknown key, or invalid profile or model ->
+  `cake doctor`.
+- A built-in, toolbox, or MCP tool is missing, filtered, or unknown ->
+  `cake debug tools`.
+- A skill did not fire, was omitted, or the catalog is over budget ->
+  `cake debug skills`.
+- A permission or sandbox denial (`Operation not permitted`, os error 1) ->
+  `debugging-cake-sandbox`; start with `cake debug grants`.
+- Wrong model, credential presence, project trust, or resolved limits ->
+  `cake debug config`; route configuration changes to `configuring-cake`.
+
+`cake debug grants` is authoritative for the effective filesystem grant value and
+every source behind it. `cake doctor` reports the merged configured grants, and
+`cake debug config` carries a grant summary plus the broader resolved
+configuration. The full command-to-question map is in `configuring-cake`.
+
+The `doctor`, `debug config`, `debug grants`, and `debug tools` reports are new
+in 077. `debug skills` predates 077 but its report shape changed in 077i, so its
+presence proves only that the command exists; older builds may print less than
+the catalog inventory described in `configuring-cake`.
+
+Probe the command list, not `--help` on the command itself: an unknown top-level
+token is parsed as a prompt, so `cake doctor --help` can print top-level help and
+exit `0` on a build without `doctor`.
+
+```bash
+has_top() { cake --help 2>/dev/null | grep -Eq "^[[:space:]]+$1([[:space:]]|$)"; }
+has_debug() { cake debug --help 2>/dev/null | grep -Eq "^[[:space:]]+$1([[:space:]]|$)"; }
+
+has_top doctor && cake doctor
+has_debug config && cake debug config
+has_debug grants && cake debug grants
+has_debug tools && cake debug tools
+has_debug skills && cake debug skills
+```
+
+If a probe fails, fall back to `cake debug models` where available (settings
+parse and unknown keys), `cake --help` (flags), and manual settings and sandbox
+inspection. The manual grant table in `debugging-cake-sandbox` remains the
+fallback for a denial.
 
 ## Step 1: Choose the target session
 
